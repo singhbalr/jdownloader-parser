@@ -22,15 +22,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    volumes:
-      # Optional: Mount a volume for persistent cache storage
-      - ./data:/app/data
-    networks:
-      - jdownloader-network
-
-networks:
-  jdownloader-network:
-    driver: bridge
-
-volumes:
-  data:

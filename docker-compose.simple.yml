@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  jdownloader-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: jdownloader-parser
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    restart: unless-stopped
