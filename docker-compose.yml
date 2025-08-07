@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  jdownloader-parser:
+    build: .
+    container_name: jdownloader-parser
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:3001/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      # Optional: Mount a volume for persistent cache storage
+      - ./data:/app/data
+    networks:
+      - jdownloader-network
+
+networks:
+  jdownloader-network:
+    driver: bridge
+
+volumes:
+  data:
