@@ -1,16 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 
 function App() {
   const [htmlSource, setHtmlSource] = useState('');
-  const [url, setUrl] = useState('');
   const [links, setLinks] = useState([]);
   const [filteredLinks, setFilteredLinks] = useState([]);
   const [selectedLinks, setSelectedLinks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [cachedResults, setCachedResults] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilters, setActiveFilters] = useState([]);
 
@@ -45,23 +42,6 @@ function App() {
     { id: 'nds', name: '.nds', pattern: /\.nds$/i },
     { id: '3ds', name: '.3ds', pattern: /\.3ds$/i }
   ];
-
-  // Load cached results from localStorage on component mount
-  useEffect(() => {
-    const cached = localStorage.getItem('jdownloader-cached-results');
-    if (cached) {
-      try {
-        setCachedResults(JSON.parse(cached));
-      } catch (e) {
-        console.error('Error parsing cached results:', e);
-      }
-    }
-  }, []);
-
-  // Save cached results to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('jdownloader-cached-results', JSON.stringify(cachedResults));
-  }, [cachedResults]);
 
   // Filter links based on search term and active filters
   useEffect(() => {
@@ -143,23 +123,12 @@ function App() {
         }
       }
 
-      // Create absolute URL if it's relative
-      let absoluteUrl = href;
-      if (url && !href.startsWith('http')) {
-        try {
-          const urlObj = new URL(url);
-          absoluteUrl = new URL(href, urlObj.origin).href;
-        } catch (e) {
-          // If URL parsing fails, keep the original href
-        }
-      }
-
       // Extract region from title
       const region = extractRegionFromTitle(title);
 
       extractedLinks.push({
         id: Math.random().toString(36).substr(2, 9),
-        href: absoluteUrl,
+        href: href,
         title: title || text,
         text: text,
         size: size,
@@ -186,76 +155,9 @@ function App() {
       const extractedLinks = parseHtml(htmlSource);
       setLinks(extractedLinks);
       setSelectedLinks([]);
-      
-      if (url) {
-        // Cache the results
-        setCachedResults(prev => ({
-          ...prev,
-          [url]: {
-            links: extractedLinks,
-            timestamp: Date.now(),
-            htmlSource: htmlSource
-          }
-        }));
-      }
-      
       setSuccess(`Successfully parsed ${extractedLinks.length} links`);
     } catch (err) {
       setError('Error parsing HTML: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFetchFromUrl = async () => {
-    if (!url.trim()) {
-      setError('Please enter a URL');
-      return;
-    }
-
-    // Check if we have cached results for this URL
-    if (cachedResults[url]) {
-      const cached = cachedResults[url];
-      const ageInHours = (Date.now() - cached.timestamp) / (1000 * 60 * 60);
-      
-      if (ageInHours < 24) { // Use cache if less than 24 hours old
-        setLinks(cached.links);
-        setSelectedLinks([]);
-        setHtmlSource(cached.htmlSource);
-        setSuccess(`Loaded ${cached.links.length} links from cache (${Math.round(ageInHours)} hours old)`);
-        return;
-      }
-    }
-
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      const response = await axios.get(`/api/fetch-url?url=${encodeURIComponent(url)}`, {
-        timeout: 30000
-      });
-      
-      const html = response.data.html;
-      setHtmlSource(html);
-      
-      const extractedLinks = parseHtml(html);
-      setLinks(extractedLinks);
-      setSelectedLinks([]);
-      
-      // Cache the results
-      setCachedResults(prev => ({
-        ...prev,
-        [url]: {
-          links: extractedLinks,
-          timestamp: Date.now(),
-          htmlSource: html
-        }
-      }));
-      
-      setSuccess(`Successfully fetched and parsed ${extractedLinks.length} links from ${url}`);
-    } catch (err) {
-      setError('Error fetching URL: ' + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
@@ -341,10 +243,15 @@ function App() {
     });
   };
 
-  const clearCache = () => {
-    setCachedResults({});
-    localStorage.removeItem('jdownloader-cached-results');
-    setSuccess('Cache cleared successfully');
+  const clearData = () => {
+    setHtmlSource('');
+    setLinks([]);
+    setFilteredLinks([]);
+    setSelectedLinks([]);
+    setSearchTerm('');
+    setActiveFilters([]);
+    setError('');
+    setSuccess('');
   };
 
   return (
@@ -360,17 +267,6 @@ function App() {
 
         <div className="input-section">
           <div className="input-group">
-            <label htmlFor="url">Website URL (optional - for fetching page source)</label>
-            <input
-              id="url"
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/files/"
-            />
-          </div>
-
-          <div className="input-group">
             <label htmlFor="htmlSource">HTML Page Source</label>
             <textarea
               id="htmlSource"
@@ -383,23 +279,16 @@ function App() {
           <div className="button-group">
             <button 
               className="btn btn-primary" 
-              onClick={handleFetchFromUrl}
-              disabled={loading || !url.trim()}
-            >
-              {loading ? 'Fetching...' : 'Fetch from URL'}
-            </button>
-            <button 
-              className="btn btn-secondary" 
               onClick={handleParseHtml}
               disabled={loading || !htmlSource.trim()}
             >
-              Parse HTML
+              {loading ? 'Parsing...' : 'Parse HTML'}
             </button>
             <button 
               className="btn btn-secondary" 
-              onClick={clearCache}
+              onClick={clearData}
             >
-              Clear Cache
+              Clear All Data
             </button>
           </div>
         </div>
