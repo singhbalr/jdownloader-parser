@@ -1,5 +1,5 @@
 # Multi-stage build for React app and Node.js server
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -19,7 +19,7 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
@@ -30,12 +30,12 @@ WORKDIR /app
 # Copy server package files
 COPY server/package*.json ./
 
-# Install only production dependencies
+# Install only production dependencies (without cheerio to avoid undici issues)
 RUN npm ci --only=production
 
 # Copy built React app and server code
 COPY --from=builder /app/build ./build
-COPY --from=builder /app/server/server.js ./
+COPY --from=builder /app/server/server-simple.js ./server.js
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs

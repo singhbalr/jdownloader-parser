@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cheerio = require('cheerio');
 const path = require('path');
 
 const app = express();
@@ -44,6 +43,23 @@ const rateLimit = (req, res, next) => {
   next();
 };
 
+// Simple HTML cleaning function without cheerio
+const cleanHtml = (html) => {
+  // Remove script tags
+  html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  
+  // Remove style tags
+  html = html.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+  
+  // Remove noscript tags
+  html = html.replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, '');
+  
+  // Remove comments
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  
+  return html;
+};
+
 // API endpoint to fetch HTML from URL
 app.get('/api/fetch-url', rateLimit, async (req, res) => {
   try {
@@ -60,7 +76,7 @@ app.get('/api/fetch-url', rateLimit, async (req, res) => {
       return res.status(400).json({ error: 'Invalid URL format' });
     }
 
-    // Fetch the HTML content with specific headers to avoid issues
+    // Fetch the HTML content
     const response = await axios.get(url, {
       timeout: 30000,
       headers: {
@@ -71,27 +87,14 @@ app.get('/api/fetch-url', rateLimit, async (req, res) => {
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1'
       },
-      // Use a more compatible approach
       maxRedirects: 5,
       validateStatus: function (status) {
-        return status >= 200 && status < 400; // Accept redirects
+        return status >= 200 && status < 400;
       }
     });
 
     const html = response.data;
-    
-    // Use cheerio to parse and clean the HTML
-    const $ = cheerio.load(html, {
-      decodeEntities: false,
-      xmlMode: false
-    });
-    
-    // Remove script and style tags to clean up the HTML
-    $('script').remove();
-    $('style').remove();
-    $('noscript').remove();
-    
-    const cleanedHtml = $.html();
+    const cleanedHtml = cleanHtml(html);
 
     res.json({ 
       html: cleanedHtml,
@@ -129,7 +132,7 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    version: '1.0.0',
+    version: '1.0.0-simple',
     nodeVersion: process.version
   });
 });
@@ -147,10 +150,10 @@ setInterval(() => {
       rateLimitStore.delete(key);
     }
   }
-}, 60000); // Clean up every minute
+}, 60000);
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Simple server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
   console.log(`Node.js version: ${process.version}`);
 }); 
