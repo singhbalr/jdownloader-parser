@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 
 function App() {
   const [htmlSource, setHtmlSource] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [links, setLinks] = useState([]);
   const [filteredLinks, setFilteredLinks] = useState([]);
   const [selectedLinks, setSelectedLinks] = useState([]);
@@ -10,6 +11,8 @@ function App() {
   const [success, setSuccess] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilters, setActiveFilters] = useState([]);
+  const [showSelectedGames, setShowSelectedGames] = useState(false);
+  const [selectionHistory, setSelectionHistory] = useState([]);
 
   // Common ROM regions and their patterns
   const regionFilters = [
@@ -43,6 +46,37 @@ function App() {
     { id: '3ds', name: '.3ds', pattern: /\.3ds$/i }
   ];
 
+  // Exclusion filters (to hide unwanted content)
+  const exclusionFilters = [
+    { id: 'no-demo', name: 'Hide Demos', pattern: /\(Demo\)|\(Kiosk\)|\(Sample\)/i },
+    { id: 'no-vc', name: 'Hide Virtual Console', pattern: /\(Virtual Console\)|\(VC\)/i },
+    { id: 'no-wiiu', name: 'Hide Wii U', pattern: /\(Wii U\)|\(WiiU\)/i },
+    { id: 'no-beta', name: 'Hide Betas', pattern: /\(Beta\)|\(Prototype\)/i },
+    { id: 'no-hack', name: 'Hide Hacks', pattern: /\(Hack\)|\(Modified\)/i },
+    { id: 'no-translation', name: 'Hide Translations', pattern: /\(Translation\)|\(Translated\)/i }
+  ];
+
+  // Load saved selections from localStorage
+  useEffect(() => {
+    const savedSelections = localStorage.getItem('jdownloader-selected-games');
+    if (savedSelections) {
+      try {
+        setSelectedLinks(JSON.parse(savedSelections));
+      } catch (e) {
+        console.error('Error parsing saved selections:', e);
+      }
+    }
+  }, []);
+
+  // Save selections to localStorage whenever they change
+  useEffect(() => {
+    if (selectedLinks.length > 0) {
+      localStorage.setItem('jdownloader-selected-games', JSON.stringify(selectedLinks));
+    } else {
+      localStorage.removeItem('jdownloader-selected-games');
+    }
+  }, [selectedLinks]);
+
   // Filter links based on search term and active filters
   useEffect(() => {
     let filtered = [...links];
@@ -57,10 +91,28 @@ function App() {
       );
     }
 
-    // Apply region filters
-    if (activeFilters.length > 0) {
+    // Apply exclusion filters (hide unwanted content)
+    const activeExclusions = activeFilters.filter(filterId => 
+      exclusionFilters.some(exclusion => exclusion.id === filterId)
+    );
+
+    if (activeExclusions.length > 0) {
       filtered = filtered.filter(link => {
-        return activeFilters.some(filterId => {
+        return !activeExclusions.some(exclusionId => {
+          const exclusion = exclusionFilters.find(f => f.id === exclusionId);
+          return exclusion && exclusion.pattern.test(link.title);
+        });
+      });
+    }
+
+    // Apply inclusion filters (show only specific content)
+    const activeInclusions = activeFilters.filter(filterId => 
+      !exclusionFilters.some(exclusion => exclusion.id === filterId)
+    );
+
+    if (activeInclusions.length > 0) {
+      filtered = filtered.filter(link => {
+        return activeInclusions.some(filterId => {
           const filter = regionFilters.find(f => f.id === filterId) || 
                         fileTypeFilters.find(f => f.id === filterId);
           return filter && filter.pattern.test(link.title);
@@ -69,7 +121,7 @@ function App() {
     }
 
     setFilteredLinks(filtered);
-  }, [links, searchTerm, activeFilters]);
+  }, [links, searchTerm, activeFilters, regionFilters, fileTypeFilters, exclusionFilters]);
 
   const extractRegionFromTitle = (title) => {
     for (const region of regionFilters) {
@@ -78,6 +130,33 @@ function App() {
       }
     }
     return null;
+  };
+
+  const constructFullUrl = (href) => {
+    if (!baseUrl.trim()) {
+      return href; // Return original href if no base URL provided
+    }
+
+    try {
+      // If href is already a full URL, return it as is
+      if (href.startsWith('http://') || href.startsWith('https://')) {
+        return href;
+      }
+
+      // Remove trailing slash from base URL if present
+      const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+      
+      // If href starts with /, it's an absolute path
+      if (href.startsWith('/')) {
+        return `${cleanBaseUrl}${href}`;
+      }
+      
+      // Otherwise, it's a relative path
+      return `${cleanBaseUrl}/${href}`;
+    } catch (error) {
+      console.error('Error constructing full URL:', error);
+      return href; // Return original href if there's an error
+    }
   };
 
   const parseHtml = (html) => {
@@ -126,9 +205,13 @@ function App() {
       // Extract region from title
       const region = extractRegionFromTitle(title);
 
+      // Construct full URL
+      const fullUrl = constructFullUrl(href);
+
       extractedLinks.push({
         id: Math.random().toString(36).substr(2, 9),
-        href: href,
+        href: href, // Keep original href for display
+        fullUrl: fullUrl, // Store full URL for export
         title: title || text,
         text: text,
         size: size,
@@ -165,27 +248,66 @@ function App() {
 
   const handleLinkToggle = (linkId) => {
     setSelectedLinks(prev => {
-      if (prev.includes(linkId)) {
-        return prev.filter(id => id !== linkId);
-      } else {
-        return [...prev, linkId];
-      }
+      const newSelection = prev.includes(linkId) 
+        ? prev.filter(id => id !== linkId)
+        : [...prev, linkId];
+      
+      // Track the change for undo functionality
+      setSelectionHistory(history => [...history, {
+        action: prev.includes(linkId) ? 'deselect' : 'select',
+        linkId: linkId,
+        previousSelection: [...prev]
+      }]);
+      
+      return newSelection;
     });
   };
 
   const handleSelectAll = () => {
-    setSelectedLinks(filteredLinks.map(link => link.id));
+    const newSelection = [...selectedLinks];
+    const visibleLinkIds = filteredLinks.map(link => link.id);
+    
+    // Add only the visible links that aren't already selected
+    visibleLinkIds.forEach(linkId => {
+      if (!newSelection.includes(linkId)) {
+        newSelection.push(linkId);
+      }
+    });
+    
+    setSelectionHistory(history => [...history, {
+      action: 'select_all_visible',
+      previousSelection: [...selectedLinks]
+    }]);
+    setSelectedLinks(newSelection);
+  };
+
+  const handleSelectAllReplace = () => {
+    const newSelection = filteredLinks.map(link => link.id);
+    setSelectionHistory(history => [...history, {
+      action: 'select_all_visible_replace',
+      previousSelection: [...selectedLinks]
+    }]);
+    setSelectedLinks(newSelection);
   };
 
   const handleDeselectAll = () => {
+    setSelectionHistory(history => [...history, {
+      action: 'deselect_all',
+      previousSelection: [...selectedLinks]
+    }]);
     setSelectedLinks([]);
   };
 
-  const handleSelectByExtension = (extension) => {
-    const matchingLinks = filteredLinks.filter(link => 
-      link.href.toLowerCase().includes(extension.toLowerCase())
-    );
-    setSelectedLinks(matchingLinks.map(link => link.id));
+  const handleUndoLastSelected = () => {
+    if (selectionHistory.length === 0) {
+      setError('No actions to undo');
+      return;
+    }
+
+    const lastAction = selectionHistory[selectionHistory.length - 1];
+    setSelectedLinks(lastAction.previousSelection);
+    setSelectionHistory(history => history.slice(0, -1));
+    setSuccess('Undid last selection action');
   };
 
   const handleFilterToggle = (filterId) => {
@@ -203,9 +325,22 @@ function App() {
     setSearchTerm('');
   };
 
+  const clearData = () => {
+    setHtmlSource('');
+    setBaseUrl('');
+    setLinks([]);
+    setFilteredLinks([]);
+    setSelectedLinks([]);
+    setSearchTerm('');
+    setActiveFilters([]);
+    setSelectionHistory([]);
+    setError('');
+    setSuccess('');
+  };
+
   const generateJDownloaderText = () => {
-    const selectedLinkObjects = filteredLinks.filter(link => selectedLinks.includes(link.id));
-    const urls = selectedLinkObjects.map(link => link.href);
+    const selectedLinkObjects = links.filter(link => selectedLinks.includes(link.id));
+    const urls = selectedLinkObjects.map(link => link.fullUrl);
     return urls.join('\n');
   };
 
@@ -243,16 +378,63 @@ function App() {
     });
   };
 
-  const clearData = () => {
-    setHtmlSource('');
-    setLinks([]);
-    setFilteredLinks([]);
+  const clearSelectedGames = () => {
+    setSelectionHistory(history => [...history, {
+      action: 'clear_all_selected',
+      previousSelection: [...selectedLinks]
+    }]);
     setSelectedLinks([]);
-    setSearchTerm('');
-    setActiveFilters([]);
-    setError('');
-    setSuccess('');
+    setSuccess('Selected games list cleared');
   };
+
+  const removeFromSelected = (linkId) => {
+    setSelectedLinks(prev => {
+      const newSelection = prev.filter(id => id !== linkId);
+      setSelectionHistory(history => [...history, {
+        action: 'remove_from_selected',
+        linkId: linkId,
+        previousSelection: [...prev]
+      }]);
+      return newSelection;
+    });
+  };
+
+  const handleExportSelectedGames = () => {
+    if (selectedGames.length === 0) {
+      setError('No selected games to export');
+      return;
+    }
+
+    const text = selectedGames.map(link => link.fullUrl).join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'selected-games-links.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    setSuccess(`Exported ${selectedGames.length} selected games to selected-games-links.txt`);
+  };
+
+  const handleCopySelectedGames = () => {
+    if (selectedGames.length === 0) {
+      setError('No selected games to copy');
+      return;
+    }
+
+    const text = selectedGames.map(link => link.fullUrl).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setSuccess(`Copied ${selectedGames.length} selected games to clipboard`);
+    }).catch(() => {
+      setError('Failed to copy selected games to clipboard');
+    });
+  };
+
+  // Get selected games from all links (not just filtered)
+  const selectedGames = links.filter(link => selectedLinks.includes(link.id));
 
   return (
     <div className="container">
@@ -266,6 +448,17 @@ function App() {
         {success && <div className="alert alert-success">{success}</div>}
 
         <div className="input-section">
+          <div className="input-group">
+            <label htmlFor="baseUrl">Base URL (for constructing full download links)</label>
+            <input
+              id="baseUrl"
+              type="url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://myrient.erista.me/files/No-Intro/Nintendo%20-%20Nintendo%20DS%20%28Encrypted%29/"
+            />
+          </div>
+
           <div className="input-group">
             <label htmlFor="htmlSource">HTML Page Source</label>
             <textarea
@@ -293,12 +486,79 @@ function App() {
           </div>
         </div>
 
+        {/* Selected Games Section */}
+        {selectedGames.length > 0 && (
+          <div className="selected-games-section">
+            <div className="selected-games-header">
+              <h3>Selected Games ({selectedGames.length})</h3>
+              <div className="selected-games-actions">
+                <button 
+                  className="btn btn-secondary"
+                  onClick={() => setShowSelectedGames(!showSelectedGames)}
+                >
+                  {showSelectedGames ? 'Hide' : 'Show'} Selected Games
+                </button>
+                <button 
+                  className="btn btn-success"
+                  onClick={handleExportSelectedGames}
+                >
+                  Download Selected
+                </button>
+                <button 
+                  className="btn btn-success"
+                  onClick={handleCopySelectedGames}
+                >
+                  Copy Selected
+                </button>
+                <button 
+                  className="btn btn-secondary"
+                  onClick={handleUndoLastSelected}
+                  disabled={selectionHistory.length === 0}
+                >
+                  Undo Last
+                </button>
+                <button 
+                  className="btn btn-secondary"
+                  onClick={clearSelectedGames}
+                >
+                  Clear All Selected
+                </button>
+              </div>
+            </div>
+
+            {showSelectedGames && (
+              <div className="selected-games-container">
+                {selectedGames.map((link) => (
+                  <div key={link.id} className="selected-game-item">
+                    <div className="selected-game-info">
+                      <div className="selected-game-title">{link.title}</div>
+                      <div className="selected-game-url">{link.href}</div>
+                      {link.fullUrl !== link.href && (
+                        <div className="selected-game-full-url">Full URL: {link.fullUrl}</div>
+                      )}
+                      {link.size && <div className="selected-game-size">Size: {link.size}</div>}
+                      {link.date && <div className="selected-game-date">Date: {link.date}</div>}
+                      {link.region && <div className="selected-game-region">Region: {link.region}</div>}
+                    </div>
+                    <button 
+                      className="btn btn-secondary remove-btn"
+                      onClick={() => removeFromSelected(link.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {links.length > 0 && (
           <div className="results-section">
             <div className="results-header">
               <h3>Extracted Links</h3>
               <div className="results-stats">
-                {selectedLinks.length} of {filteredLinks.length} selected (showing {filteredLinks.length} of {links.length} total)
+                {selectedLinks.length} of {links.length} total selected (showing {filteredLinks.length} filtered)
               </div>
             </div>
 
@@ -325,7 +585,13 @@ function App() {
                   className="btn btn-secondary" 
                   onClick={handleSelectAll}
                 >
-                  Select All Visible
+                  Select All Visible (Add)
+                </button>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={handleSelectAllReplace}
+                >
+                  Select All Visible (Replace)
                 </button>
                 <button 
                   className="btn btn-secondary" 
@@ -333,6 +599,26 @@ function App() {
                 >
                   Deselect All
                 </button>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={handleUndoLastSelected}
+                  disabled={selectionHistory.length === 0}
+                >
+                  Undo Last Selected
+                </button>
+              </div>
+
+              <h4>Hide Unwanted Content</h4>
+              <div className="filter-grid">
+                {exclusionFilters.map((filter) => (
+                  <button
+                    key={filter.id}
+                    className={`filter-btn ${activeFilters.includes(filter.id) ? 'active' : ''}`}
+                    onClick={() => handleFilterToggle(filter.id)}
+                  >
+                    {filter.name}
+                  </button>
+                ))}
               </div>
 
               <h4>Region Filters</h4>
@@ -374,6 +660,9 @@ function App() {
                     <div className="link-info">
                       <div className="link-title">{link.title}</div>
                       <div className="link-url">{link.href}</div>
+                      {link.fullUrl !== link.href && (
+                        <div className="link-full-url">Full URL: {link.fullUrl}</div>
+                      )}
                       {link.size && <div className="link-size">Size: {link.size}</div>}
                       {link.date && <div className="link-date">Date: {link.date}</div>}
                       {link.region && <div className="link-region">Region: {link.region}</div>}
